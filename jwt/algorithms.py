@@ -262,7 +262,13 @@ class HMACAlgorithm(Algorithm):
         self.hash_alg = hash_alg
 
     def prepare_key(self, key: str | bytes) -> bytes:
-        key_bytes = force_bytes(key)
+        # key_bytes = force_bytes(key)
+        if isinstance(key, str):
+            key_bytes = key.encode("utf-8")
+        elif isinstance(key, bytes):
+            key_bytes = key
+        else:
+            raise TypeError("Expected a string value")
 
         if is_pem_format(key_bytes) or is_ssh_key(key_bytes):
             raise InvalidKeyError(
@@ -284,8 +290,16 @@ class HMACAlgorithm(Algorithm):
 
     @staticmethod
     def to_jwk(key_obj: str | bytes, as_dict: bool = False) -> Union[JWKDict, str]:
+        
+        if isinstance(key_obj, str):
+            key_as_bytes = key_obj.encode("utf-8")
+        elif isinstance(key_obj, bytes):
+            key_as_bytes = key_obj
+        else:
+            raise TypeError("Expected a string value")
         jwk = {
-            "k": base64url_encode(force_bytes(key_obj)).decode(),
+            "k": base64url_encode(key_as_bytes).decode(),
+            # "k": base64url_encode(force_bytes(key_obj)).decode(),
             "kty": "oct",
         }
 
@@ -340,7 +354,13 @@ if has_crypto:
             if not isinstance(key, (bytes, str)):
                 raise TypeError("Expecting a PEM-formatted key.")
 
-            key_bytes = force_bytes(key)
+            # key_bytes = force_bytes(key)
+            if isinstance(key, str):
+                key_bytes = key.encode("utf-8")
+            elif isinstance(key, bytes):
+                key_bytes = key
+            else:
+                raise TypeError("Expected a string value")
 
             try:
                 if key_bytes.startswith(b"ssh-rsa"):
@@ -505,7 +525,13 @@ if has_crypto:
             if not isinstance(key, (bytes, str)):
                 raise TypeError("Expecting a PEM-formatted key.")
 
-            key_bytes = force_bytes(key)
+            # key_bytes = force_bytes(key)
+            if isinstance(key, str):
+                key_bytes = key.encode("utf-8")
+            elif isinstance(key, bytes):
+                key_bytes = key
+            else:
+                raise TypeError("Expected a string value")
 
             # Attempt to load key. We don't know if it's
             # a Signing Key or a Verifying Key, so we try
@@ -787,9 +813,16 @@ if has_crypto:
                     format=PublicFormat.Raw,
                 )
                 crv = "Ed25519" if isinstance(key, Ed25519PublicKey) else "Ed448"
-
+                
+                if isinstance(x, str):
+                    x_as_bytes = x.encode("utf-8")
+                elif isinstance(x, bytes):
+                    x_as_bytes = x
+                else:
+                    raise TypeError("Expected a string value")
                 obj = {
-                    "x": base64url_encode(force_bytes(x)).decode(),
+                    # "x": base64url_encode(force_bytes(x)).decode(),
+                    "x": base64url_encode(x_as_bytes).decode(),
                     "kty": "OKP",
                     "crv": crv,
                 }
@@ -812,9 +845,21 @@ if has_crypto:
                 )
 
                 crv = "Ed25519" if isinstance(key, Ed25519PrivateKey) else "Ed448"
+                if isinstance(x, str):
+                    x_as_bytes = x.encode("utf-8")
+                elif isinstance(x, bytes):
+                    x_as_bytes = x
+                else:
+                    raise TypeError("Expected a string value")
+                if isinstance(d, str):
+                    d_as_bytes = d.encode("utf-8")
+                elif isinstance(d, bytes):
+                    d_as_bytes = d
+                else:
+                    raise TypeError("Expected a string value")
                 obj = {
-                    "x": base64url_encode(force_bytes(x)).decode(),
-                    "d": base64url_encode(force_bytes(d)).decode(),
+                    "x": base64url_encode(x_as_bytes).decode(),
+                    "d": base64url_encode(d_as_bytes).decode(),
                     "kty": "OKP",
                     "crv": crv,
                 }
