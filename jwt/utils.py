@@ -23,6 +23,12 @@ def force_bytes(value: Union[bytes, str]) -> bytes:
 
 
 def base64url_decode(input: Union[bytes, str]) -> bytes:
+    # if isinstance(input, str):
+    #     input_bytes = input.encode("utf-8")
+    # elif isinstance(input, bytes):
+    #     input_bytes = input
+    # else:
+    #     raise TypeError("Expected a string value")
     input_bytes = force_bytes(input)
 
     rem = len(input_bytes) % 4
@@ -50,7 +56,13 @@ def to_base64url_uint(val: int) -> bytes:
 
 
 def from_base64url_uint(val: Union[bytes, str]) -> int:
-    data = base64url_decode(force_bytes(val))
+    if isinstance(val, str):
+        data = val.encode("utf-8")
+    elif isinstance(val, bytes):
+        data = val
+    else:
+        raise TypeError("Expected a string value")
+    # data = base64url_decode(force_bytes(val))
     return int.from_bytes(data, byteorder="big")
 
 
