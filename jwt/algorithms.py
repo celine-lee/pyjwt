@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import hashlib
@@ -17,13 +18,14 @@ from .utils import (
     is_ssh_key,
     raw_to_der_signature,
     to_base64url_uint,
+    base64url_encode,
+    base64url_decode,
 )
 
 if sys.version_info >= (3, 8):
     from typing import Literal
 else:
     from typing_extensions import Literal
-
 
 try:
     from cryptography.exceptions import InvalidSignature
@@ -74,9 +76,7 @@ try:
 except ModuleNotFoundError:
     has_crypto = False
 
-
 if TYPE_CHECKING:
-    # Type aliases for convenience in algorithms method signatures
     AllowedRSAKeys = RSAPrivateKey | RSAPublicKey
     AllowedECKeys = EllipticCurvePrivateKey | EllipticCurvePublicKey
     AllowedOKPKeys = (
@@ -89,7 +89,6 @@ if TYPE_CHECKING:
     AllowedPublicKeys = (
         RSAPublicKey | EllipticCurvePublicKey | Ed25519PublicKey | Ed448PublicKey
     )
-
 
 requires_cryptography = {
     "RS256",
@@ -128,9 +127,7 @@ def get_default_algorithms() -> dict[str, Algorithm]:
                 "ES256K": ECAlgorithm(ECAlgorithm.SHA256),
                 "ES384": ECAlgorithm(ECAlgorithm.SHA384),
                 "ES521": ECAlgorithm(ECAlgorithm.SHA512),
-                "ES512": ECAlgorithm(
-                    ECAlgorithm.SHA512
-                ),  # Backward compat for #219 fix
+                "ES512": ECAlgorithm(ECAlgorithm.SHA512),  # Backward compat for #219 fix
                 "PS256": RSAPSSAlgorithm(RSAPSSAlgorithm.SHA256),
                 "PS384": RSAPSSAlgorithm(RSAPSSAlgorithm.SHA384),
                 "PS512": RSAPSSAlgorithm(RSAPSSAlgorithm.SHA512),
@@ -147,12 +144,6 @@ class Algorithm(ABC):
     """
 
     def compute_hash_digest(self, bytestr: bytes) -> bytes:
-        """
-        Compute a hash digest using the specified algorithm's hash algorithm.
-
-        If there is no hash algorithm, raises a NotImplementedError.
-        """
-        # lookup self.hash_alg if defined in a way that mypy can understand
         hash_alg = getattr(self, "hash_alg", None)
         if hash_alg is None:
             raise NotImplementedError
@@ -170,36 +161,27 @@ class Algorithm(ABC):
 
     @abstractmethod
     def prepare_key(self, key: Any) -> Any:
-        """
-        Performs necessary validation and conversions on the key and returns
-        the key value in the proper format for sign() and verify().
-        """
+        pass
 
     @abstractmethod
     def sign(self, msg: bytes, key: Any) -> bytes:
-        """
-        Returns a digital signature for the specified message
-        using the specified key value.
-        """
+        pass
 
     @abstractmethod
     def verify(self, msg: bytes, key: Any, sig: bytes) -> bool:
-        """
-        Verifies that the specified digital signature is valid
-        for the specified message and key values.
-        """
+        pass
 
     @overload
     @staticmethod
     @abstractmethod
     def to_jwk(key_obj, as_dict: Literal[True]) -> JWKDict:
-        ...  # pragma: no cover
+        ...
 
     @overload
     @staticmethod
     @abstractmethod
     def to_jwk(key_obj, as_dict: Literal[False] = False) -> str:
-        ...  # pragma: no cover
+        ...
 
     @staticmethod
     @abstractmethod
@@ -216,10 +198,22 @@ class Algorithm(ABC):
         """
 
 
+# -------------------------
+# Reusable helper functions
+# -------------------------
+def _ensure_bytes(val: Union[str, bytes]) -> bytes:
+    if isinstance(val, str):
+        return val.encode("utf-8")
+    return val
+
+
+def _load_b64_field(field: Union[str, bytes]) -> bytes:
+    return base64url_decode(_ensure_bytes(field))
+
+
 class NoneAlgorithm(Algorithm):
     """
-    Placeholder for use when no signing or verification
-    operations are required.
+    Placeholder for use when no signing or verification operations are required.
     """
 
     def prepare_key(self, key: str | None) -> None:
@@ -248,8 +242,7 @@ class NoneAlgorithm(Algorithm):
 
 class HMACAlgorithm(Algorithm):
     """
-    Performs signing and verification operations using HMAC
-    and the specified hash function.
+    Performs signing and verification operations using HMAC and the specified hash function.
     """
 
     SHA256: ClassVar[HashlibHash] = hashlib.sha256
@@ -260,44 +253,28 @@ class HMACAlgorithm(Algorithm):
         self.hash_alg = hash_alg
 
     def prepare_key(self, key: str | bytes) -> bytes:
-        if isinstance(key, str):
-            key_bytes = key.encode("utf-8")
-        elif isinstance(key, bytes):
-            key_bytes = key
-        else:
-            raise TypeError("Expected a string value")
-
+        key_bytes = _ensure_bytes(key)
         if is_pem_format(key_bytes) or is_ssh_key(key_bytes):
             raise InvalidKeyError(
                 "The specified key is an asymmetric key or x509 certificate and"
                 " should not be used as an HMAC secret."
             )
-
         return key_bytes
 
     @overload
     @staticmethod
     def to_jwk(key_obj: str | bytes, as_dict: Literal[True]) -> JWKDict:
-        ...  # pragma: no cover
+        ...
 
     @overload
     @staticmethod
     def to_jwk(key_obj: str | bytes, as_dict: Literal[False] = False) -> str:
-        ...  # pragma: no cover
+        ...
 
     @staticmethod
     def to_jwk(key_obj: str | bytes, as_dict: bool = False) -> Union[JWKDict, str]:
-        
-        if isinstance(key_obj, str):
-            key_as_bytes = key_obj.encode("utf-8")
-        elif isinstance(key_obj, bytes):
-            key_as_bytes = key_obj
-        else:
-            raise TypeError("Expected a string value")
-        jwk = {
-            "k": base64.urlsafe_b64encode(key_as_bytes).replace(b"=", b"").decode(),
-            "kty": "oct",
-        }
+        key_as_bytes = _ensure_bytes(key_obj)
+        jwk = {"k": base64url_encode(key_as_bytes).decode(), "kty": "oct"}
 
         if as_dict:
             return jwk
@@ -320,19 +297,8 @@ class HMACAlgorithm(Algorithm):
             raise InvalidKeyError("Not an HMAC key")
 
         k_val = obj["k"]
-        if isinstance(k_val, str):
-            k_as_bytes = k_val.encode("utf-8")
-        elif isinstance(k_val, bytes):
-            k_as_bytes = k_val
-        else:
-            raise TypeError("Expected a string value")
-
-        rem = len(k_as_bytes) % 4
-
-        if rem > 0:
-            k_as_bytes += b"=" * (4 - rem)
-        return base64.urlsafe_b64decode(k_as_bytes)
-
+        k_as_bytes = _ensure_bytes(k_val)
+        return base64url_decode(k_as_bytes)
 
     def sign(self, msg: bytes, key: bytes) -> bytes:
         return hmac.new(key, msg, self.hash_alg).digest()
@@ -345,8 +311,8 @@ if has_crypto:
 
     class RSAAlgorithm(Algorithm):
         """
-        Performs signing and verification operations using
-        RSASSA-PKCS-v1_5 and the specified hash function.
+        Performs signing and verification operations using RSASSA-PKCS-v1_5
+        and the specified hash function.
         """
 
         SHA256: ClassVar[type[hashes.HashAlgorithm]] = hashes.SHA256
@@ -363,43 +329,32 @@ if has_crypto:
             if not isinstance(key, (bytes, str)):
                 raise TypeError("Expecting a PEM-formatted key.")
 
-            if isinstance(key, str):
-                key_bytes = key.encode("utf-8")
-            elif isinstance(key, bytes):
-                key_bytes = key
-            else:
-                raise TypeError("Expected a string value")
+            key_bytes = _ensure_bytes(key)
 
             try:
                 if key_bytes.startswith(b"ssh-rsa"):
                     return cast(RSAPublicKey, load_ssh_public_key(key_bytes))
                 else:
-                    return cast(
-                        RSAPrivateKey, load_pem_private_key(key_bytes, password=None)
-                    )
+                    return cast(RSAPrivateKey, load_pem_private_key(key_bytes, password=None))
             except ValueError:
                 return cast(RSAPublicKey, load_pem_public_key(key_bytes))
 
         @overload
         @staticmethod
         def to_jwk(key_obj: AllowedRSAKeys, as_dict: Literal[True]) -> JWKDict:
-            ...  # pragma: no cover
+            ...
 
         @overload
         @staticmethod
         def to_jwk(key_obj: AllowedRSAKeys, as_dict: Literal[False] = False) -> str:
-            ...  # pragma: no cover
+            ...
 
         @staticmethod
-        def to_jwk(
-            key_obj: AllowedRSAKeys, as_dict: bool = False
-        ) -> Union[JWKDict, str]:
+        def to_jwk(key_obj: AllowedRSAKeys, as_dict: bool = False) -> Union[JWKDict, str]:
             obj: dict[str, Any] | None = None
 
             if hasattr(key_obj, "private_numbers"):
-                # Private key
                 numbers = key_obj.private_numbers()
-
                 obj = {
                     "kty": "RSA",
                     "key_ops": ["sign"],
@@ -412,11 +367,8 @@ if has_crypto:
                     "dq": to_base64url_uint(numbers.dmq1).decode(),
                     "qi": to_base64url_uint(numbers.iqmp).decode(),
                 }
-
             elif hasattr(key_obj, "verify"):
-                # Public key
                 numbers = key_obj.public_numbers()
-
                 obj = {
                     "kty": "RSA",
                     "key_ops": ["verify"],
@@ -447,7 +399,6 @@ if has_crypto:
                 raise InvalidKeyError("Not an RSA key")
 
             if "d" in obj and "e" in obj and "n" in obj:
-                # Private key
                 if "oth" in obj:
                     raise InvalidKeyError(
                         "Unsupported RSA private key: > 2 primes not supported"
@@ -455,9 +406,7 @@ if has_crypto:
 
                 other_props = ["p", "q", "dp", "dq", "qi"]
                 props_found = [prop in obj for prop in other_props]
-                any_props_found = any(props_found)
-
-                if any_props_found and not all(props_found):
+                if any(props_found) and not all(props_found):
                     raise InvalidKeyError(
                         "RSA key must include all parameters if any are present besides d"
                     )
@@ -467,7 +416,7 @@ if has_crypto:
                     from_base64url_uint(obj["n"]),
                 )
 
-                if any_props_found:
+                if any(props_found):
                     numbers = RSAPrivateNumbers(
                         d=from_base64url_uint(obj["d"]),
                         p=from_base64url_uint(obj["p"]),
@@ -479,10 +428,7 @@ if has_crypto:
                     )
                 else:
                     d = from_base64url_uint(obj["d"])
-                    p, q = rsa_recover_prime_factors(
-                        public_numbers.n, d, public_numbers.e
-                    )
-
+                    p, q = rsa_recover_prime_factors(public_numbers.n, d, public_numbers.e)
                     numbers = RSAPrivateNumbers(
                         d=d,
                         p=p,
@@ -495,7 +441,6 @@ if has_crypto:
 
                 return numbers.private_key()
             elif "n" in obj and "e" in obj:
-                # Public key
                 return RSAPublicNumbers(
                     from_base64url_uint(obj["e"]),
                     from_base64url_uint(obj["n"]),
@@ -515,8 +460,7 @@ if has_crypto:
 
     class ECAlgorithm(Algorithm):
         """
-        Performs signing and verification operations using
-        ECDSA and the specified hash function
+        Performs signing and verification operations using ECDSA and the specified hash function.
         """
 
         SHA256: ClassVar[type[hashes.HashAlgorithm]] = hashes.SHA256
@@ -533,37 +477,25 @@ if has_crypto:
             if not isinstance(key, (bytes, str)):
                 raise TypeError("Expecting a PEM-formatted key.")
 
-            if isinstance(key, str):
-                key_bytes = key.encode("utf-8")
-            elif isinstance(key, bytes):
-                key_bytes = key
-            else:
-                raise TypeError("Expected a string value")
+            key_bytes = _ensure_bytes(key)
 
-            # Attempt to load key. We don't know if it's
-            # a Signing Key or a Verifying Key, so we try
-            # the Verifying Key first.
             try:
                 if key_bytes.startswith(b"ecdsa-sha2-"):
                     crypto_key = load_ssh_public_key(key_bytes)
                 else:
-                    crypto_key = load_pem_public_key(key_bytes)  # type: ignore[assignment]
+                    crypto_key = load_pem_public_key(key_bytes)
             except ValueError:
-                crypto_key = load_pem_private_key(key_bytes, password=None)  # type: ignore[assignment]
+                crypto_key = load_pem_private_key(key_bytes, password=None)
 
-            # Explicit check the key to prevent confusing errors from cryptography
-            if not isinstance(
-                crypto_key, (EllipticCurvePrivateKey, EllipticCurvePublicKey)
-            ):
+            if not isinstance(crypto_key, (EllipticCurvePrivateKey, EllipticCurvePublicKey)):
                 raise InvalidKeyError(
-                    "Expecting a EllipticCurvePrivateKey/EllipticCurvePublicKey. Wrong key provided for ECDSA algorithms"
+                    "Expecting an EllipticCurvePrivateKey/EllipticCurvePublicKey. Wrong key provided for ECDSA algorithms"
                 )
 
             return crypto_key
 
         def sign(self, msg: bytes, key: EllipticCurvePrivateKey) -> bytes:
             der_sig = key.sign(msg, ECDSA(self.hash_alg()))
-
             return der_to_raw_signature(der_sig, key.curve)
 
         def verify(self, msg: bytes, key: "AllowedECKeys", sig: bytes) -> bool:
@@ -573,11 +505,7 @@ if has_crypto:
                 return False
 
             try:
-                public_key = (
-                    key.public_key()
-                    if isinstance(key, EllipticCurvePrivateKey)
-                    else key
-                )
+                public_key = key.public_key() if isinstance(key, EllipticCurvePrivateKey) else key
                 public_key.verify(der_sig, msg, ECDSA(self.hash_alg()))
                 return True
             except InvalidSignature:
@@ -586,17 +514,15 @@ if has_crypto:
         @overload
         @staticmethod
         def to_jwk(key_obj: AllowedECKeys, as_dict: Literal[True]) -> JWKDict:
-            ...  # pragma: no cover
+            ...
 
         @overload
         @staticmethod
         def to_jwk(key_obj: AllowedECKeys, as_dict: Literal[False] = False) -> str:
-            ...  # pragma: no cover
+            ...
 
         @staticmethod
-        def to_jwk(
-            key_obj: AllowedECKeys, as_dict: bool = False
-        ) -> Union[JWKDict, str]:
+        def to_jwk(key_obj: AllowedECKeys, as_dict: bool = False) -> Union[JWKDict, str]:
             if isinstance(key_obj, EllipticCurvePrivateKey):
                 public_numbers = key_obj.public_key().public_numbers()
             elif isinstance(key_obj, EllipticCurvePublicKey):
@@ -623,9 +549,7 @@ if has_crypto:
             }
 
             if isinstance(key_obj, EllipticCurvePrivateKey):
-                obj["d"] = to_base64url_uint(
-                    key_obj.private_numbers().private_value
-                ).decode()
+                obj["d"] = to_base64url_uint(key_obj.private_numbers().private_value).decode()
 
             if as_dict:
                 return obj
@@ -650,97 +574,46 @@ if has_crypto:
             if "x" not in obj or "y" not in obj:
                 raise InvalidKeyError("Not an Elliptic curve key")
 
-            x_val = obj.get("x")
-            if isinstance(x_val, str):
-                x_as_bytes = x_val.encode("utf-8")
-            elif isinstance(x_val, bytes):
-                x_as_bytes = x_val
-            else:
-                raise TypeError("Expected a string value")
-
-            rem = len(x_as_bytes) % 4
-
-            if rem > 0:
-                x_as_bytes += b"=" * (4 - rem)
-            x = base64.urlsafe_b64decode(x_as_bytes)
-
-            y_val = obj.get("y")
-            if isinstance(y_val, str):
-                y_as_bytes = y_val.encode("utf-8")
-            elif isinstance(y_val, bytes):
-                y_as_bytes = y_val
-            else:
-                raise TypeError("Expected a string value")
-
-            rem = len(y_as_bytes) % 4
-
-            if rem > 0:
-                y_as_bytes += b"=" * (4 - rem)
-            y = base64.urlsafe_b64decode(y_as_bytes)
+            x = int.from_bytes(_load_b64_field(obj["x"]), byteorder="big")
+            y = int.from_bytes(_load_b64_field(obj["y"]), byteorder="big")
 
             curve = obj.get("crv")
             curve_obj: EllipticCurve
 
             if curve == "P-256":
-                if len(x) == len(y) == 32:
-                    curve_obj = SECP256R1()
-                else:
+                curve_obj = SECP256R1()
+                if not (len(to_base64url_uint(x)) == len(to_base64url_uint(y)) == 32):
                     raise InvalidKeyError("Coords should be 32 bytes for curve P-256")
             elif curve == "P-384":
-                if len(x) == len(y) == 48:
-                    curve_obj = SECP384R1()
-                else:
+                curve_obj = SECP384R1()
+                if not (len(to_base64url_uint(x)) == len(to_base64url_uint(y)) == 48):
                     raise InvalidKeyError("Coords should be 48 bytes for curve P-384")
             elif curve == "P-521":
-                if len(x) == len(y) == 66:
-                    curve_obj = SECP521R1()
-                else:
+                curve_obj = SECP521R1()
+                if not (len(to_base64url_uint(x)) == len(to_base64url_uint(y)) == 66):
                     raise InvalidKeyError("Coords should be 66 bytes for curve P-521")
             elif curve == "secp256k1":
-                if len(x) == len(y) == 32:
-                    curve_obj = SECP256K1()
-                else:
-                    raise InvalidKeyError(
-                        "Coords should be 32 bytes for curve secp256k1"
-                    )
+                curve_obj = SECP256K1()
+                if not (len(to_base64url_uint(x)) == len(to_base64url_uint(y)) == 32):
+                    raise InvalidKeyError("Coords should be 32 bytes for curve secp256k1")
             else:
                 raise InvalidKeyError(f"Invalid curve: {curve}")
 
-            public_numbers = EllipticCurvePublicNumbers(
-                x=int.from_bytes(x, byteorder="big"),
-                y=int.from_bytes(y, byteorder="big"),
-                curve=curve_obj,
-            )
+            public_numbers = EllipticCurvePublicNumbers(x, y, curve_obj)
 
             if "d" not in obj:
                 return public_numbers.public_key()
 
-            d_val = obj.get("d")
-            if isinstance(d_val, str):
-                d_as_bytes = d_val.encode("utf-8")
-            elif isinstance(d_val, bytes):
-                d_as_bytes = d_val
-            else:
-                raise TypeError("Expected a string value")
-
-            rem = len(d_as_bytes) % 4
-
-            if rem > 0:
-                d_as_bytes += b"=" * (4 - rem)
-            d = base64.urlsafe_b64decode(d_as_bytes)
-
-            if len(d) != len(x):
-                raise InvalidKeyError(
-                    "D should be {} bytes for curve {}", len(x), curve
-                )
-
+            d = _load_b64_field(obj["d"])
+            if len(d) != len(to_base64url_uint(x)):
+                raise InvalidKeyError("D parameter size does not match coordinate size")
             return EllipticCurvePrivateNumbers(
                 int.from_bytes(d, byteorder="big"), public_numbers
             ).private_key()
 
     class RSAPSSAlgorithm(RSAAlgorithm):
         """
-        Performs a signature using RSASSA-PSS with MGF1
+        Performs a signature using RSASSA-PSS with MGF1.
         """
 
         def sign(self, msg: bytes, key: RSAPrivateKey) -> bytes:
@@ -770,9 +643,8 @@ if has_crypto:
 
     class OKPAlgorithm(Algorithm):
         """
-        Performs signing and verification operations using EdDSA
-
-        This class requires ``cryptography>=2.6`` to be installed.
+        Performs signing and verification operations using EdDSA.
+        Requires cryptography>=2.6.
         """
 
         def __init__(self, **kwargs: Any) -> None:
@@ -781,100 +653,59 @@ if has_crypto:
         def prepare_key(self, key: AllowedOKPKeys | str | bytes) -> AllowedOKPKeys:
             if isinstance(key, (bytes, str)):
                 key_str = key.decode("utf-8") if isinstance(key, bytes) else key
-                key_bytes = key.encode("utf-8") if isinstance(key, str) else key
-
+                key_bytes = _ensure_bytes(key)
                 if "-----BEGIN PUBLIC" in key_str:
-                    key = load_pem_public_key(key_bytes)  # type: ignore[assignment]
+                    key = load_pem_public_key(key_bytes)
                 elif "-----BEGIN PRIVATE" in key_str:
-                    key = load_pem_private_key(key_bytes, password=None)  # type: ignore[assignment]
-                elif key_str[0:4] == "ssh-":
-                    key = load_ssh_public_key(key_bytes)  # type: ignore[assignment]
+                    key = load_pem_private_key(key_bytes, password=None)
+                elif key_str.startswith("ssh-"):
+                    key = load_ssh_public_key(key_bytes)
 
-            # Explicit check the key to prevent confusing errors from cryptography
             if not isinstance(
                 key,
                 (Ed25519PrivateKey, Ed25519PublicKey, Ed448PrivateKey, Ed448PublicKey),
             ):
                 raise InvalidKeyError(
-                    "Expecting a EllipticCurvePrivateKey/EllipticCurvePublicKey. Wrong key provided for EdDSA algorithms"
+                    "Wrong key provided for EdDSA algorithms"
                 )
 
             return key
 
-        def sign(
-            self, msg: str | bytes, key: Ed25519PrivateKey | Ed448PrivateKey
-        ) -> bytes:
-            """
-            Sign a message ``msg`` using the EdDSA private key ``key``
-            :param str|bytes msg: Message to sign
-            :param Ed25519PrivateKey}Ed448PrivateKey key: A :class:`.Ed25519PrivateKey`
-                or :class:`.Ed448PrivateKey` isinstance
-            :return bytes signature: The signature, as bytes
-            """
-            msg_bytes = msg.encode("utf-8") if isinstance(msg, str) else msg
+        def sign(self, msg: str | bytes, key: Ed25519PrivateKey | Ed448PrivateKey) -> bytes:
+            msg_bytes = _ensure_bytes(msg)
             return key.sign(msg_bytes)
 
-        def verify(
-            self, msg: str | bytes, key: AllowedOKPKeys, sig: str | bytes
-        ) -> bool:
-            """
-            Verify a given ``msg`` against a signature ``sig`` using the EdDSA key ``key``
-
-            :param str|bytes sig: EdDSA signature to check ``msg`` against
-            :param str|bytes msg: Message to sign
-            :param Ed25519PrivateKey|Ed25519PublicKey|Ed448PrivateKey|Ed448PublicKey key:
-                A private or public EdDSA key instance
-            :return bool verified: True if signature is valid, False if not.
-            """
+        def verify(self, msg: str | bytes, key: AllowedOKPKeys, sig: str | bytes) -> bool:
             try:
-                msg_bytes = msg.encode("utf-8") if isinstance(msg, str) else msg
-                sig_bytes = sig.encode("utf-8") if isinstance(sig, str) else sig
-
-                public_key = (
-                    key.public_key()
-                    if isinstance(key, (Ed25519PrivateKey, Ed448PrivateKey))
-                    else key
-                )
+                msg_bytes = _ensure_bytes(msg)
+                sig_bytes = _ensure_bytes(sig)
+                public_key = key.public_key() if hasattr(key, "public_key") else key
                 public_key.verify(sig_bytes, msg_bytes)
-                return True  # If no exception was raised, the signature is valid.
+                return True
             except InvalidSignature:
                 return False
 
         @overload
         @staticmethod
         def to_jwk(key: AllowedOKPKeys, as_dict: Literal[True]) -> JWKDict:
-            ...  # pragma: no cover
+            ...
 
         @overload
         @staticmethod
         def to_jwk(key: AllowedOKPKeys, as_dict: Literal[False] = False) -> str:
-            ...  # pragma: no cover
+            ...
 
         @staticmethod
         def to_jwk(key: AllowedOKPKeys, as_dict: bool = False) -> Union[JWKDict, str]:
             if isinstance(key, (Ed25519PublicKey, Ed448PublicKey)):
-                x = key.public_bytes(
-                    encoding=Encoding.Raw,
-                    format=PublicFormat.Raw,
-                )
+                x = key.public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)
                 crv = "Ed25519" if isinstance(key, Ed25519PublicKey) else "Ed448"
-                
-                if isinstance(x, str):
-                    x_as_bytes = x.encode("utf-8")
-                elif isinstance(x, bytes):
-                    x_as_bytes = x
-                else:
-                    raise TypeError("Expected a string value")
                 obj = {
-                    "x": base64.urlsafe_b64encode(x_as_bytes).replace(b"=", b"").decode(),
+                    "x": base64url_encode(_ensure_bytes(x)).decode(),
                     "kty": "OKP",
                     "crv": crv,
                 }
-
-                if as_dict:
-                    return obj
-                else:
-                    return json.dumps(obj)
+                return obj if as_dict else json.dumps(obj)
 
             if isinstance(key, (Ed25519PrivateKey, Ed448PrivateKey)):
                 d = key.private_bytes(
@@ -882,36 +713,15 @@ if has_crypto:
                     format=PrivateFormat.Raw,
                     encryption_algorithm=NoEncryption(),
                 )
-
-                x = key.public_key().public_bytes(
-                    encoding=Encoding.Raw,
-                    format=PublicFormat.Raw,
-                )
-
+                x = key.public_key().public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)
                 crv = "Ed25519" if isinstance(key, Ed25519PrivateKey) else "Ed448"
-                if isinstance(x, str):
-                    x_as_bytes = x.encode("utf-8")
-                elif isinstance(x, bytes):
-                    x_as_bytes = x
-                else:
-                    raise TypeError("Expected a string value")
-                if isinstance(d, str):
-                    d_as_bytes = d.encode("utf-8")
-                elif isinstance(d, bytes):
-                    d_as_bytes = d
-                else:
-                    raise TypeError("Expected a string value")
                 obj = {
-                    "x": base64.urlsafe_b64encode(x_as_bytes).replace(b"=", b"").decode(),
-                    "d": base64.urlsafe_b64encode(d_as_bytes).replace(b"=", b"").decode(),
+                    "x": base64url_encode(_ensure_bytes(x)).decode(),
+                    "d": base64url_encode(_ensure_bytes(d)).decode(),
                     "kty": "OKP",
                     "crv": crv,
                 }
-
-                if as_dict:
-                    return obj
-                else:
-                    return json.dumps(obj)
+                return obj if as_dict else json.dumps(obj)
 
             raise InvalidKeyError("Not a public or private key")
 
@@ -931,46 +741,18 @@ if has_crypto:
                 raise InvalidKeyError("Not an Octet Key Pair")
 
             curve = obj.get("crv")
-            if curve != "Ed25519" and curve != "Ed448":
+            if curve not in ("Ed25519", "Ed448"):
                 raise InvalidKeyError(f"Invalid curve: {curve}")
 
             if "x" not in obj:
                 raise InvalidKeyError('OKP should have "x" parameter')
-            x_val = obj.get("x")
-            if isinstance(x_val, str):
-                x_as_bytes = x_val.encode("utf-8")
-            elif isinstance(x_val, bytes):
-                x_as_bytes = x_val
-            else:
-                raise TypeError("Expected a string value")
 
-            rem = len(x_as_bytes) % 4
-
-            if rem > 0:
-                x_as_bytes += b"=" * (4 - rem)
-            x = base64.urlsafe_b64decode(x_as_bytes)
+            x = base64url_decode(_ensure_bytes(obj["x"]))
 
             try:
                 if "d" not in obj:
-                    if curve == "Ed25519":
-                        return Ed25519PublicKey.from_public_bytes(x)
-                    return Ed448PublicKey.from_public_bytes(x)
-                d_val = obj.get("d")
-                if isinstance(d_val, str):
-                    d_as_bytes = d_val.encode("utf-8")
-                elif isinstance(d_val, bytes):
-                    d_as_bytes = d_val
-                else:
-                    raise TypeError("Expected a string value")
-
-                rem = len(d_as_bytes) % 4
-
-                if rem > 0:
-                    d_as_bytes += b"=" * (4 - rem)
-                d = base64.urlsafe_b64decode(d_as_bytes)
-
-                if curve == "Ed25519":
-                    return Ed25519PrivateKey.from_private_bytes(d)
-                return Ed448PrivateKey.from_private_bytes(d)
+                    return Ed25519PublicKey.from_public_bytes(x) if curve == "Ed25519" else Ed448PublicKey.from_public_bytes(x)
+                d = base64url_decode(_ensure_bytes(obj["d"]))
+                return Ed25519PrivateKey.from_private_bytes(d) if curve == "Ed25519" else Ed448PrivateKey.from_private_bytes(d)
             except ValueError as err:
                 raise InvalidKeyError("Invalid key parameter") from err
