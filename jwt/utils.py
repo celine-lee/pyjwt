@@ -1,3 +1,4 @@
+
 import base64
 import binascii
 import re
@@ -13,32 +14,29 @@ except ModuleNotFoundError:
     pass
 
 
+def _pad_b64(data: Union[bytes, str]) -> bytes:
+    """
+    Helper to pad a base64url string/binary so its length is a multiple of 4.
+    """
+    d = data if isinstance(data, bytes) else data.encode("utf-8")
+    rem = len(d) % 4
+    if rem:
+        d += b"=" * (4 - rem)
+    return d
+
+
 def to_base64url_uint(val: int) -> bytes:
     if val < 0:
         raise ValueError("Must be a positive integer")
-
     int_bytes = bytes_from_int(val)
-
     if len(int_bytes) == 0:
         int_bytes = b"\x00"
-
     return base64.urlsafe_b64encode(int_bytes).replace(b"=", b"")
 
 
 def from_base64url_uint(val: Union[bytes, str]) -> int:
-    if isinstance(val, str):
-        input_bytes = val.encode("utf-8")
-    elif isinstance(val, bytes):
-        input_bytes = val
-    else:
-        raise TypeError("Expected a string value")
-    rem = len(input_bytes) % 4
-
-    if rem > 0:
-        input_bytes += b"=" * (4 - rem)
-
-    data = base64.urlsafe_b64decode(input_bytes)
-    return int.from_bytes(data, byteorder="big")
+    decoded = base64.urlsafe_b64decode(_pad_b64(val))
+    return int.from_bytes(decoded, byteorder="big")
 
 
 def number_to_bytes(num: int, num_bytes: int) -> bytes:
@@ -53,37 +51,29 @@ def bytes_to_number(string: bytes) -> int:
 def bytes_from_int(val: int) -> bytes:
     remaining = val
     byte_length = 0
-
-    while remaining != 0:
+    while remaining:
         remaining >>= 8
         byte_length += 1
-
     return val.to_bytes(byte_length, "big", signed=False)
 
 
 def der_to_raw_signature(der_sig: bytes, curve: "EllipticCurve") -> bytes:
     num_bits = curve.key_size
     num_bytes = (num_bits + 7) // 8
-
     r, s = decode_dss_signature(der_sig)
-
     return number_to_bytes(r, num_bytes) + number_to_bytes(s, num_bytes)
 
 
 def raw_to_der_signature(raw_sig: bytes, curve: "EllipticCurve") -> bytes:
     num_bits = curve.key_size
     num_bytes = (num_bits + 7) // 8
-
     if len(raw_sig) != 2 * num_bytes:
         raise ValueError("Invalid signature")
-
     r = bytes_to_number(raw_sig[:num_bytes])
     s = bytes_to_number(raw_sig[num_bytes:])
-
     return bytes(encode_dss_signature(r, s))
 
 
-# Based on https://github.com/hynek/pem/blob/7ad94db26b0bc21d10953f5dbad3acfdfacf57aa/src/pem/_core.py#L224-L252
 _PEMS = {
     b"CERTIFICATE",
     b"TRUSTED CERTIFICATE",
@@ -104,11 +94,7 @@ _PEMS = {
 }
 
 _PEM_RE = re.compile(
-    b"----[- ]BEGIN ("
-    + b"|".join(_PEMS)
-    + b""")[- ]----\r?
-.+?\r?
-----[- ]END \\1[- ]----\r?\n?""",
+    b"----[- ]BEGIN (" + b"|".join(_PEMS) + b""")[- ]----\r?.+?\r?----[- ]END \\1[- ]----\r?\n?""",
     re.DOTALL,
 )
 
@@ -117,7 +103,6 @@ def is_pem_format(key: bytes) -> bool:
     return bool(_PEM_RE.search(key))
 
 
-# Based on https://github.com/pyca/cryptography/blob/bcb70852d577b3f490f015378c75cba74986297b/src/cryptography/hazmat/primitives/serialization/ssh.py#L40-L46
 _CERT_SUFFIX = b"-cert-v01@openssh.com"
 _SSH_PUBKEY_RC = re.compile(rb"\A(\S+)[ \t]+(\S+)")
 _SSH_KEY_FORMATS = [
@@ -131,13 +116,11 @@ _SSH_KEY_FORMATS = [
 
 
 def is_ssh_key(key: bytes) -> bool:
-    if any(string_value in key for string_value in _SSH_KEY_FORMATS):
+    if any(fmt in key for fmt in _SSH_KEY_FORMATS):
         return True
-
     ssh_pubkey_match = _SSH_PUBKEY_RC.match(key)
     if ssh_pubkey_match:
         key_type = ssh_pubkey_match.group(1)
-        if _CERT_SUFFIX == key_type[-len(_CERT_SUFFIX) :]:
+        if _CERT_SUFFIX == key_type[-len(_CERT_SUFFIX):]:
             return True
-
     return False
