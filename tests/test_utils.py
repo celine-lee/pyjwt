@@ -1,6 +1,16 @@
 import pytest
 
-from jwt.utils import force_bytes, from_base64url_uint, to_base64url_uint
+from jwt.utils import from_base64url_uint, to_base64url_uint
+# from jwt.utils import force_bytes, from_base64url_uint, to_base64url_uint
+
+from typing import Union
+def force_bytes(value: Union[bytes, str]) -> bytes:
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    elif isinstance(value, bytes):
+        return value
+    else:
+        raise TypeError("Expected a string value")
 
 
 @pytest.mark.parametrize(

@@ -1,8 +1,22 @@
 import json
 import os
-
+import base64
 from jwt.algorithms import has_crypto
-from jwt.utils import base64url_decode
+from typing import Union
+def base64url_decode(input: Union[bytes, str]) -> bytes:
+    if isinstance(input, str):
+        input_bytes = input.encode("utf-8")
+    elif isinstance(input, bytes):
+        input_bytes = input
+    else:
+        raise TypeError("Expected a string value")
+
+    rem = len(input_bytes) % 4
+
+    if rem > 0:
+        input_bytes += b"=" * (4 - rem)
+
+    return base64.urlsafe_b64decode(input_bytes)
 
 try:
     from cryptography.hazmat.primitives.asymmetric import ec

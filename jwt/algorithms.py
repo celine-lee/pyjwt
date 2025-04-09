@@ -4,16 +4,14 @@ import hashlib
 import hmac
 import json
 import sys
+import base64
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, Union, cast, overload
 
 from .exceptions import InvalidKeyError
 from .types import HashlibHash, JWKDict
 from .utils import (
-    base64url_decode,
-    base64url_encode,
     der_to_raw_signature,
-    force_bytes,
     from_base64url_uint,
     is_pem_format,
     is_ssh_key,
@@ -262,7 +260,6 @@ class HMACAlgorithm(Algorithm):
         self.hash_alg = hash_alg
 
     def prepare_key(self, key: str | bytes) -> bytes:
-        # key_bytes = force_bytes(key)
         if isinstance(key, str):
             key_bytes = key.encode("utf-8")
         elif isinstance(key, bytes):
@@ -298,8 +295,7 @@ class HMACAlgorithm(Algorithm):
         else:
             raise TypeError("Expected a string value")
         jwk = {
-            "k": base64url_encode(key_as_bytes).decode(),
-            # "k": base64url_encode(force_bytes(key_obj)).decode(),
+            "k": base64.urlsafe_b64encode(key_as_bytes).replace(b"=", b"").decode(),
             "kty": "oct",
         }
 
@@ -323,7 +319,20 @@ class HMACAlgorithm(Algorithm):
         if obj.get("kty") != "oct":
             raise InvalidKeyError("Not an HMAC key")
 
-        return base64url_decode(obj["k"])
+        k_val = obj["k"]
+        if isinstance(k_val, str):
+            k_as_bytes = k_val.encode("utf-8")
+        elif isinstance(k_val, bytes):
+            k_as_bytes = k_val
+        else:
+            raise TypeError("Expected a string value")
+
+        rem = len(k_as_bytes) % 4
+
+        if rem > 0:
+            k_as_bytes += b"=" * (4 - rem)
+        return base64.urlsafe_b64decode(k_as_bytes)
+
 
     def sign(self, msg: bytes, key: bytes) -> bytes:
         return hmac.new(key, msg, self.hash_alg).digest()
@@ -354,7 +363,6 @@ if has_crypto:
             if not isinstance(key, (bytes, str)):
                 raise TypeError("Expecting a PEM-formatted key.")
 
-            # key_bytes = force_bytes(key)
             if isinstance(key, str):
                 key_bytes = key.encode("utf-8")
             elif isinstance(key, bytes):
@@ -525,7 +533,6 @@ if has_crypto:
             if not isinstance(key, (bytes, str)):
                 raise TypeError("Expecting a PEM-formatted key.")
 
-            # key_bytes = force_bytes(key)
             if isinstance(key, str):
                 key_bytes = key.encode("utf-8")
             elif isinstance(key, bytes):
@@ -643,8 +650,33 @@ if has_crypto:
             if "x" not in obj or "y" not in obj:
                 raise InvalidKeyError("Not an Elliptic curve key")
 
-            x = base64url_decode(obj.get("x"))
-            y = base64url_decode(obj.get("y"))
+            x_val = obj.get("x")
+            if isinstance(x_val, str):
+                x_as_bytes = x_val.encode("utf-8")
+            elif isinstance(x_val, bytes):
+                x_as_bytes = x_val
+            else:
+                raise TypeError("Expected a string value")
+
+            rem = len(x_as_bytes) % 4
+
+            if rem > 0:
+                x_as_bytes += b"=" * (4 - rem)
+            x = base64.urlsafe_b64decode(x_as_bytes)
+
+            y_val = obj.get("y")
+            if isinstance(y_val, str):
+                y_as_bytes = y_val.encode("utf-8")
+            elif isinstance(y_val, bytes):
+                y_as_bytes = y_val
+            else:
+                raise TypeError("Expected a string value")
+
+            rem = len(y_as_bytes) % 4
+
+            if rem > 0:
+                y_as_bytes += b"=" * (4 - rem)
+            y = base64.urlsafe_b64decode(y_as_bytes)
 
             curve = obj.get("crv")
             curve_obj: EllipticCurve
@@ -683,7 +715,20 @@ if has_crypto:
             if "d" not in obj:
                 return public_numbers.public_key()
 
-            d = base64url_decode(obj.get("d"))
+            d_val = obj.get("d")
+            if isinstance(d_val, str):
+                d_as_bytes = d_val.encode("utf-8")
+            elif isinstance(d_val, bytes):
+                d_as_bytes = d_val
+            else:
+                raise TypeError("Expected a string value")
+
+            rem = len(d_as_bytes) % 4
+
+            if rem > 0:
+                d_as_bytes += b"=" * (4 - rem)
+            d = base64.urlsafe_b64decode(d_as_bytes)
+
             if len(d) != len(x):
                 raise InvalidKeyError(
                     "D should be {} bytes for curve {}", len(x), curve
@@ -821,8 +866,7 @@ if has_crypto:
                 else:
                     raise TypeError("Expected a string value")
                 obj = {
-                    # "x": base64url_encode(force_bytes(x)).decode(),
-                    "x": base64url_encode(x_as_bytes).decode(),
+                    "x": base64.urlsafe_b64encode(x_as_bytes).replace(b"=", b"").decode(),
                     "kty": "OKP",
                     "crv": crv,
                 }
@@ -858,8 +902,8 @@ if has_crypto:
                 else:
                     raise TypeError("Expected a string value")
                 obj = {
-                    "x": base64url_encode(x_as_bytes).decode(),
-                    "d": base64url_encode(d_as_bytes).decode(),
+                    "x": base64.urlsafe_b64encode(x_as_bytes).replace(b"=", b"").decode(),
+                    "d": base64.urlsafe_b64encode(d_as_bytes).replace(b"=", b"").decode(),
                     "kty": "OKP",
                     "crv": crv,
                 }
@@ -892,14 +936,39 @@ if has_crypto:
 
             if "x" not in obj:
                 raise InvalidKeyError('OKP should have "x" parameter')
-            x = base64url_decode(obj.get("x"))
+            x_val = obj.get("x")
+            if isinstance(x_val, str):
+                x_as_bytes = x_val.encode("utf-8")
+            elif isinstance(x_val, bytes):
+                x_as_bytes = x_val
+            else:
+                raise TypeError("Expected a string value")
+
+            rem = len(x_as_bytes) % 4
+
+            if rem > 0:
+                x_as_bytes += b"=" * (4 - rem)
+            x = base64.urlsafe_b64decode(x_as_bytes)
 
             try:
                 if "d" not in obj:
                     if curve == "Ed25519":
                         return Ed25519PublicKey.from_public_bytes(x)
                     return Ed448PublicKey.from_public_bytes(x)
-                d = base64url_decode(obj.get("d"))
+                d_val = obj.get("d")
+                if isinstance(d_val, str):
+                    d_as_bytes = d_val.encode("utf-8")
+                elif isinstance(d_val, bytes):
+                    d_as_bytes = d_val
+                else:
+                    raise TypeError("Expected a string value")
+
+                rem = len(d_as_bytes) % 4
+
+                if rem > 0:
+                    d_as_bytes += b"=" * (4 - rem)
+                d = base64.urlsafe_b64decode(d_as_bytes)
+
                 if curve == "Ed25519":
                     return Ed25519PrivateKey.from_private_bytes(d)
                 return Ed448PrivateKey.from_private_bytes(d)

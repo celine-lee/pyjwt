@@ -13,36 +13,6 @@ except ModuleNotFoundError:
     pass
 
 
-def force_bytes(value: Union[bytes, str]) -> bytes:
-    if isinstance(value, str):
-        return value.encode("utf-8")
-    elif isinstance(value, bytes):
-        return value
-    else:
-        raise TypeError("Expected a string value")
-
-
-def base64url_decode(input: Union[bytes, str]) -> bytes:
-    if isinstance(input, str):
-        input_bytes = input.encode("utf-8")
-    elif isinstance(input, bytes):
-        input_bytes = input
-    else:
-        raise TypeError("Expected a string value")
-    # input_bytes = force_bytes(input)
-
-    rem = len(input_bytes) % 4
-
-    if rem > 0:
-        input_bytes += b"=" * (4 - rem)
-
-    return base64.urlsafe_b64decode(input_bytes)
-
-
-def base64url_encode(input: bytes) -> bytes:
-    return base64.urlsafe_b64encode(input).replace(b"=", b"")
-
-
 def to_base64url_uint(val: int) -> bytes:
     if val < 0:
         raise ValueError("Must be a positive integer")
@@ -52,18 +22,22 @@ def to_base64url_uint(val: int) -> bytes:
     if len(int_bytes) == 0:
         int_bytes = b"\x00"
 
-    return base64url_encode(int_bytes)
+    return base64.urlsafe_b64encode(int_bytes).replace(b"=", b"")
 
 
 def from_base64url_uint(val: Union[bytes, str]) -> int:
     if isinstance(val, str):
-        val_bytes = val.encode("utf-8")
+        input_bytes = val.encode("utf-8")
     elif isinstance(val, bytes):
-        val_bytes = val
+        input_bytes = val
     else:
         raise TypeError("Expected a string value")
-    data = base64url_decode(val_bytes)
-    # data = base64url_decode(force_bytes(val))
+    rem = len(input_bytes) % 4
+
+    if rem > 0:
+        input_bytes += b"=" * (4 - rem)
+
+    data = base64.urlsafe_b64decode(input_bytes)
     return int.from_bytes(data, byteorder="big")
 
 

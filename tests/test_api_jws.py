@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 
+import base64
 from jwt.algorithms import NoneAlgorithm, has_crypto
 from jwt.api_jws import PyJWS
 from jwt.exceptions import (
@@ -11,7 +12,23 @@ from jwt.exceptions import (
     InvalidSignatureError,
     InvalidTokenError,
 )
-from jwt.utils import base64url_decode
+# from jwt.utils import base64url_decode
+from typing import Union
+def base64url_decode(input: Union[bytes, str]) -> bytes:
+    if isinstance(input, str):
+        input_bytes = input.encode("utf-8")
+    elif isinstance(input, bytes):
+        input_bytes = input
+    else:
+        raise TypeError("Expected a string value")
+
+    rem = len(input_bytes) % 4
+
+    if rem > 0:
+        input_bytes += b"=" * (4 - rem)
+
+    return base64.urlsafe_b64decode(input_bytes)
+
 from jwt.warnings import RemovedInPyjwt3Warning
 
 from .utils import crypto_required, key_path, no_crypto_required

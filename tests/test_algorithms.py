@@ -1,12 +1,27 @@
 import base64
 import json
-from typing import Any, cast
+from typing import Any, cast, Union
 
 import pytest
 
 from jwt.algorithms import HMACAlgorithm, NoneAlgorithm, has_crypto
 from jwt.exceptions import InvalidKeyError
-from jwt.utils import base64url_decode
+# from jwt.utils import base64url_decode
+def base64url_decode(input: Union[bytes, str]) -> bytes:
+    if isinstance(input, str):
+        input_bytes = input.encode("utf-8")
+    elif isinstance(input, bytes):
+        input_bytes = input
+    else:
+        raise TypeError("Expected a string value")
+    # input_bytes = force_bytes(input)
+
+    rem = len(input_bytes) % 4
+
+    if rem > 0:
+        input_bytes += b"=" * (4 - rem)
+
+    return base64.urlsafe_b64decode(input_bytes)
 
 from .keys import load_ec_pub_key_p_521, load_hmac_key, load_rsa_pub_key
 from .utils import crypto_required, key_path

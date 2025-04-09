@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import binascii
 import json
 import warnings
@@ -17,7 +18,6 @@ from .exceptions import (
     InvalidSignatureError,
     InvalidTokenError,
 )
-from .utils import base64url_decode, base64url_encode
 from .warnings import RemovedInPyjwt3Warning
 
 if TYPE_CHECKING:
@@ -145,12 +145,12 @@ class PyJWS:
             header, separators=(",", ":"), cls=json_encoder, sort_keys=sort_headers
         ).encode()
 
-        segments.append(base64url_encode(json_header))
+        segments.append(base64.urlsafe_b64encode(json_header).replace(b"=", b""))
 
         if is_payload_detached:
             msg_payload = payload
         else:
-            msg_payload = base64url_encode(payload)
+            msg_payload = base64.urlsafe_b64encode(payload).replace(b"=", b"")
         segments.append(msg_payload)
 
         # Segments
@@ -160,7 +160,7 @@ class PyJWS:
         key = alg_obj.prepare_key(key)
         signature = alg_obj.sign(signing_input, key)
 
-        segments.append(base64url_encode(signature))
+        segments.append( base64.urlsafe_b64encode(signature).replace(b"=", b""))
 
         # Don't put the payload content inside the encoded token when detached
         if is_payload_detached:
@@ -260,7 +260,20 @@ class PyJWS:
             raise DecodeError("Not enough segments") from err
 
         try:
-            header_data = base64url_decode(header_segment)
+            if isinstance(header_segment, str):
+                header_bytes = header_segment.encode("utf-8")
+            elif isinstance(header_segment, bytes):
+                header_bytes = header_segment
+            else:
+                raise TypeError("Expected a string value")
+
+            rem = len(header_bytes) % 4
+
+            if rem > 0:
+                header_bytes += b"=" * (4 - rem)
+
+            header_data = base64.urlsafe_b64decode(header_bytes)
+
         except (TypeError, binascii.Error) as err:
             raise DecodeError("Invalid header padding") from err
 
@@ -273,12 +286,37 @@ class PyJWS:
             raise DecodeError("Invalid header string: must be a json object")
 
         try:
-            payload = base64url_decode(payload_segment)
+            if isinstance(payload_segment, str):
+                payload_bytes = payload_segment.encode("utf-8")
+            elif isinstance(payload_segment, bytes):
+                payload_bytes = payload_segment
+            else:
+                raise TypeError("Expected a string value")
+
+            rem = len(payload_bytes) % 4
+
+            if rem > 0:
+                payload_bytes += b"=" * (4 - rem)
+
+            payload = base64.urlsafe_b64decode(payload_bytes)
+
         except (TypeError, binascii.Error) as err:
             raise DecodeError("Invalid payload padding") from err
 
         try:
-            signature = base64url_decode(crypto_segment)
+            if isinstance(crypto_segment, str):
+                crypto_bytes = crypto_segment.encode("utf-8")
+            elif isinstance(crypto_segment, bytes):
+                crypto_bytes = crypto_segment
+            else:
+                raise TypeError("Expected a string value")
+
+            rem = len(crypto_bytes) % 4
+
+            if rem > 0:
+                crypto_bytes += b"=" * (4 - rem)
+
+            signature = base64.urlsafe_b64decode(crypto_bytes)
         except (TypeError, binascii.Error) as err:
             raise DecodeError("Invalid crypto padding") from err
 
